@@ -1,0 +1,10 @@
+{
+  "description": "A school-focused social platform where students and staff share updates, join conversations, and stay connected with their campus community.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
