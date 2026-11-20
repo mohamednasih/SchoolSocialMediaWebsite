@@ -1,9 +1,8 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   Bell,
   BellOff,
-  Bookmark,
   ChevronRight,
   CircleUserRound,
   Ellipsis,
@@ -36,10 +35,34 @@ type Page =
   | "Friends"
   | "Notifications"
   | "Messages"
-  | "Bookmarks"
   | "Profile"
   | "Settings"
   | "Search";
+
+type SettingsView = "overview" | "profile" | "avatar" | "email" | "password" | "sessions";
+
+type AccountProfile = {
+  name: string;
+  bio: string;
+  photo: File | null;
+};
+
+const initialProfile: AccountProfile = {
+  name: "Alex Morgan",
+  bio: "Music, science and reading.",
+  photo: null,
+};
+
+function initials(name: string) {
+  return name.trim().split(/\s+/).slice(0, 2)
+    .map((part) => part.charAt(0))
+    .join("")
+    .toUpperCase();
+}
+
+function postAuthor(profile: AccountProfile) {
+  return { name: profile.name, avatar: initials(profile.name), photo: profile.photo };
+}
 
 type Post = {
   id: number;
@@ -48,13 +71,13 @@ type Post = {
   time: string;
   avatar: string;
   avatarTone: string;
+  photo?: File | null;
   audience?: string;
   text: string;
   tag?: string;
   replies: number;
   likes: number;
   liked?: boolean;
-  bookmarked?: boolean;
 };
 
 type MenuTarget = {
@@ -86,7 +109,6 @@ const initialPosts: Post[] = [
     tag: "CommunityGuidelines",
     replies: 12,
     likes: 86,
-    bookmarked: true,
   },
   {
     id: 2,
@@ -123,7 +145,6 @@ const initialPosts: Post[] = [
     tag: "Science",
     replies: 7,
     likes: 24,
-    bookmarked: true,
   },
   {
     id: 4,
@@ -139,15 +160,16 @@ const initialPosts: Post[] = [
   },
 ];
 
-const navItems: { label: Page; icon: typeof Home; badge?: number }[] = [
-  { label: "Home", icon: Home },
-  { label: "Explore", icon: Search },
+const navItems: { label: Page; icon: typeof Home; badge?: number; mobilePrimary?: boolean }[] = [
+  { label: "Home", icon: Home, mobilePrimary: true },
+  { label: "Explore", icon: Search, mobilePrimary: true },
   { label: "Friends", icon: Users, badge: 2 },
-  { label: "Notifications", icon: Bell, badge: 3 },
-  { label: "Messages", icon: Mail, badge: 2 },
-  { label: "Bookmarks", icon: Bookmark },
+  { label: "Notifications", icon: Bell, badge: 2, mobilePrimary: true },
+  { label: "Messages", icon: Mail, badge: 2, mobilePrimary: true },
   { label: "Profile", icon: CircleUserRound },
+  { label: "Settings", icon: Settings },
 ];
+const moreNavItems = navItems.filter((item) => !item.mobilePrimary);
 
 const trends = [
   { title: "ExamTips", posts: "126 posts" },
@@ -203,6 +225,11 @@ const onlineFriends = [
   },
 ];
 
+const friends: UserProfile[] = [
+  ...onlineFriends.map((friend) => ({ ...friend, online: true })),
+  ...people.slice(0, 2).map((person) => ({ ...person, online: false })),
+].filter((friend, index, all) => all.findIndex((other) => other.handle === friend.handle) === index);
+
 const conversations = [
   {
     name: "Maya Chen",
@@ -242,21 +269,41 @@ const conversations = [
   },
 ];
 
+type AvatarSize = "sm" | "md" | "lg" | "xl";
+
 function Avatar({
   text,
   tone,
+  photo,
   size = "md",
 }: {
   text: string;
   tone: string;
-  size?: "sm" | "md" | "lg" | "xl";
+  photo?: File | null;
+  size?: AvatarSize;
 }) {
+  const image = useRef<HTMLImageElement>(null);
+  useEffect(() => {
+    if (!image.current || !photo) return;
+    const url = URL.createObjectURL(photo);
+    image.current.src = url;
+    return () => URL.revokeObjectURL(url);
+  }, [photo]);
   const sizes = {
     sm: "h-9 w-9 text-[11px]",
     md: "h-11 w-11 text-xs",
     lg: "h-12 w-12 text-sm",
     xl: "h-24 w-24 text-2xl",
   };
+  if (photo) {
+    return (
+      <img
+        ref={image}
+        alt=""
+        className={`${sizes[size]} shrink-0 rounded-full object-cover shadow-sm ring-2 ring-white`}
+      />
+    );
+  }
   return (
     <div
       className={`${sizes[size]} ${tone} flex shrink-0 items-center justify-center rounded-full font-bold tracking-tight shadow-sm ring-2 ring-white`}
@@ -264,6 +311,17 @@ function Avatar({
     >
       {text}
     </div>
+  );
+}
+
+function ProfileAvatar({ profile, size }: { profile: AccountProfile; size: AvatarSize }) {
+  return (
+    <Avatar
+      text={initials(profile.name)}
+      photo={profile.photo}
+      tone="bg-[#F0C966] text-[#493407]"
+      size={size}
+    />
   );
 }
 
@@ -287,17 +345,27 @@ function PageHeader({
   );
 }
 
+function SettingsButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="inline-flex min-h-11 shrink-0 items-center gap-2 rounded-xl px-3 text-sm font-bold text-[#516176] hover:bg-[#EEF3F8] focus-visible:outline-[#1E63B5]"
+    >
+      <Settings size={18} aria-hidden="true" />
+      Settings
+    </button>
+  );
+}
+
 function PostCard({
   post,
   onLike,
-  onBookmark,
   onOpen,
   onMenu,
   flash,
 }: {
   post: Post;
   onLike: (id: number) => void;
-  onBookmark: (id: number) => void;
   onOpen: (post: Post) => void;
   onMenu: (target: MenuTarget) => void;
   flash: (message: string) => void;
@@ -310,7 +378,7 @@ function PostCard({
       className="cursor-pointer border-b border-[#DCE3EE] px-4 py-5 transition hover:bg-[#FBFCFE] sm:px-6"
     >
       <div className="flex gap-3">
-        <Avatar text={post.avatar} tone={post.avatarTone} size="lg" />
+        <Avatar text={post.avatar} tone={post.avatarTone} photo={post.photo} size="lg" />
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
@@ -371,15 +439,6 @@ function PostCard({
               {post.likes}
             </button>
             <button
-              onClick={() => onBookmark(post.id)}
-              className={`grid h-8 w-8 place-items-center rounded-full transition hover:bg-[#EAF2FC] hover:text-[#1E63B5] ${
-                post.bookmarked ? "text-[#1E63B5]" : ""
-              }`}
-              aria-label="Bookmark"
-            >
-              <Bookmark size={18} fill={post.bookmarked ? "currentColor" : "none"} />
-            </button>
-            <button
               onClick={() => flash("Share options")}
               className="grid h-8 w-8 place-items-center rounded-full transition hover:bg-[#EAF2FC] hover:text-[#1E63B5]"
               aria-label="Share"
@@ -394,22 +453,22 @@ function PostCard({
 }
 
 function HomePage({
+  profile,
   posts,
   draft,
   setDraft,
   publish,
   onLike,
-  onBookmark,
   onOpen,
   onMenu,
   flash,
 }: {
+  profile: AccountProfile;
   posts: Post[];
   draft: string;
   setDraft: (value: string) => void;
   publish: () => void;
   onLike: (id: number) => void;
-  onBookmark: (id: number) => void;
   onOpen: (post: Post) => void;
   onMenu: (target: MenuTarget) => void;
   flash: (message: string) => void;
@@ -448,7 +507,7 @@ function HomePage({
       </div>
       <section className="border-b border-[#DCE3EE] px-4 py-5 sm:px-6">
         <div className="flex gap-3">
-          <Avatar text="AM" tone="bg-[#F0C966] text-[#493407]" size="lg" />
+          <ProfileAvatar profile={profile} size="lg" />
           <div className="min-w-0 flex-1">
             <textarea
               id="composer"
@@ -481,7 +540,6 @@ function HomePage({
           key={post.id}
           post={post}
           onLike={onLike}
-          onBookmark={onBookmark}
           onOpen={onOpen}
           onMenu={onMenu}
           flash={flash}
@@ -492,17 +550,17 @@ function HomePage({
 }
 
 function PostDetailPage({
+  profile,
   post,
   onBack,
   onLike,
-  onBookmark,
   onMenu,
   flash,
 }: {
+  profile: AccountProfile;
   post: Post;
   onBack: () => void;
   onLike: (id: number) => void;
-  onBookmark: (id: number) => void;
   onMenu: (target: MenuTarget) => void;
   flash: (message: string) => void;
 }) {
@@ -547,10 +605,10 @@ function PostDetailPage({
       ...current,
       {
         id: Date.now(),
-        name: "Alex Morgan",
+        name: profile.name,
         handle: "@alexm",
         time: "now",
-        initials: "AM",
+        initials: initials(profile.name),
         tone: "bg-[#F0C966] text-[#493407]",
         text: reply.trim(),
         likes: 0,
@@ -579,7 +637,6 @@ function PostDetailPage({
       <PostCard
         post={post}
         onLike={onLike}
-        onBookmark={onBookmark}
         onOpen={() => undefined}
         onMenu={onMenu}
         flash={flash}
@@ -587,7 +644,7 @@ function PostDetailPage({
 
       <section className="border-b border-[#DCE3EE] px-4 py-4 sm:px-6">
         <div className="flex gap-3">
-          <Avatar text="AM" tone="bg-[#F0C966] text-[#493407]" size="md" />
+          <ProfileAvatar profile={profile} size="md" />
           <div className="min-w-0 flex-1">
             <p className="mb-2 text-xs text-[#7B899B]">
               Commenting on <span className="font-semibold text-[#1E63B5]">{post.name}’s post</span>
@@ -618,6 +675,8 @@ function PostDetailPage({
       <div>
         {comments.map((comment) => {
           const liked = likedComments.includes(comment.id);
+          const own = comment.handle === "@alexm";
+          const author = own ? profile.name : comment.name;
           return (
             <article
               key={comment.id}
@@ -625,20 +684,24 @@ function PostDetailPage({
             >
               <div className="flex gap-3">
                 <div className="relative">
-                  <Avatar text={comment.initials} tone={comment.tone} size="md" />
+                  {own ? (
+                    <ProfileAvatar profile={profile} size="md" />
+                  ) : (
+                    <Avatar text={comment.initials} tone={comment.tone} size="md" />
+                  )}
                   <span className="absolute left-1/2 top-12 h-[calc(100%+6px)] w-px -translate-x-1/2 bg-[#E0E6EE]" />
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-1.5">
-                      <p className="truncate text-sm font-extrabold">{comment.name}</p>
+                      <p className="truncate text-sm font-extrabold">{author}</p>
                       <span className="text-xs text-[#A0AAB7]">·</span>
                       <span className="shrink-0 text-xs text-[#7B899B]">{comment.time}</span>
                     </div>
                     <button
                       onClick={() =>
                         onMenu({
-                          name: comment.name,
+                          name: author,
                           handle: comment.handle,
                           kind: "comment",
                         })
@@ -677,190 +740,112 @@ function PostDetailPage({
   );
 }
 
+function SearchField({
+  value,
+  onChange,
+  onSearch,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  onSearch: (query: string) => void;
+}) {
+  const [suggesting, setSuggesting] = useState(false);
+  const input = useRef<HTMLInputElement>(null);
+  const suggestion = useRef<HTMLButtonElement>(null);
+  const term = value.trim();
+
+  return (
+    <form
+      role="search"
+      className="relative min-w-0 flex-1"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (term) {
+          setSuggesting(false);
+          onSearch(term);
+        }
+      }}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setSuggesting(false);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && suggesting) {
+          event.preventDefault();
+          input.current?.focus();
+          setSuggesting(false);
+        }
+      }}
+    >
+      <div className="flex h-[52px] items-center gap-2 rounded-full border border-[#CDD9E3] bg-white pl-4 pr-2 focus-within:border-[#99AFBF]">
+        <Search size={18} aria-hidden="true" className="shrink-0 text-[#536471]" />
+        <input
+          ref={input}
+          value={value}
+          onChange={(event) => {
+            onChange(event.target.value);
+            setSuggesting(true);
+          }}
+          onFocus={() => setSuggesting(true)}
+          onClick={() => setSuggesting(true)}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowDown" && suggestion.current) {
+              event.preventDefault();
+              suggestion.current.focus();
+            }
+          }}
+          autoComplete="off"
+          enterKeyHint="search"
+          aria-label="Search Westbridge"
+          placeholder="Search Westbridge"
+          className="h-full min-w-0 flex-1 bg-transparent text-base text-[#0F1419] outline-none placeholder:text-[#66768A]"
+        />
+        {value && (
+          <button
+            type="button"
+            aria-label="Clear search"
+            onClick={() => {
+              onChange("");
+              input.current?.focus();
+            }}
+            className="grid size-10 shrink-0 place-items-center rounded-full"
+          >
+            <span className="grid size-[22px] place-items-center rounded-full bg-[#0F1419] text-white">
+              <X size={12} strokeWidth={3} />
+            </span>
+          </button>
+        )}
+      </div>
+      {suggesting && term && (
+        <div className="absolute inset-x-0 top-full z-40 overflow-hidden rounded-lg border border-[#E1E7EB] bg-white shadow-[0_3px_14px_rgba(15,20,25,0.14)]">
+          <button
+            ref={suggestion}
+            type="submit"
+            onMouseDown={(event) => event.preventDefault()}
+            className="block min-h-16 w-full break-words px-5 py-4 text-left text-base text-[#0F1419] hover:bg-[#F7F9FA] focus-visible:bg-[#EFF3F8]"
+          >
+            Search for "{term}"
+          </button>
+        </div>
+      )}
+    </form>
+  );
+}
+
 function ExplorePage({
-  posts,
-  onOpen,
-  onViewProfile,
+  onSearch,
   flash,
 }: {
-  posts: Post[];
-  onOpen: (post: Post) => void;
-  onViewProfile: (profile: UserProfile) => void;
+  onSearch: (query: string) => void;
   flash: (message: string) => void;
 }) {
-  const [filter, setFilter] = useState("For you");
   const [query, setQuery] = useState("");
-  const [searchActive, setSearchActive] = useState(false);
-  const [searchTab, setSearchTab] = useState<"Posts" | "People">("Posts");
-  const normalizedQuery = query.trim().toLowerCase();
-  const searchPeople = [...onlineFriends, ...people].filter(
-    (person, index, all) => all.findIndex((item) => item.name === person.name) === index,
-  );
-  const matchingPeople = searchPeople.filter((person) =>
-    person.name.toLowerCase().includes(normalizedQuery),
-  );
-  const matchingPosts = posts.filter(
-    (post) =>
-      post.text.toLowerCase().includes(normalizedQuery) ||
-      post.name.toLowerCase().includes(normalizedQuery) ||
-      post.tag?.toLowerCase().includes(normalizedQuery.replace("#", "")),
-  );
   return (
     <>
       <PageHeader title="Explore" subtitle="Discover what’s happening at Westbridge" />
       <div className="border-b border-[#DCE3EE] p-4 sm:p-5">
-        <label className="flex items-center gap-3 rounded-2xl bg-[#EFF3F8] px-4 py-3.5 focus-within:ring-2 focus-within:ring-[#B8D3EF]">
-          <Search size={19} className="text-[#718097]" />
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            onFocus={() => setSearchActive(true)}
-            className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-[#8795A7]"
-            placeholder="Search Westbridge"
-          />
-          {searchActive && (
-            <button
-              onClick={() => {
-                setQuery("");
-                setSearchActive(false);
-              }}
-              className="grid h-7 w-7 place-items-center rounded-full text-[#718097] hover:bg-[#E1E7EE]"
-              aria-label="Close search"
-            >
-              <X size={15} />
-            </button>
-          )}
-        </label>
-        {searchActive ? (
-          <div className="mt-4 grid grid-cols-2 rounded-xl bg-[#E9EEF4] p-1">
-            {(["Posts", "People"] as const).map((item) => (
-              <button
-                key={item}
-                onClick={() => setSearchTab(item)}
-                className={`rounded-lg py-2.5 text-sm font-bold transition ${
-                  searchTab === item
-                    ? "bg-white text-[#14233C] shadow-sm"
-                    : "text-[#718097] hover:text-[#33445C]"
-                }`}
-              >
-                {item}
-              </button>
-            ))}
-          </div>
-        ) : (
-          <div className="mt-4 flex gap-2 overflow-x-auto pb-1">
-            {["For you", "Trending", "Questions", "Study", "Friends"].map((item) => (
-              <button
-                key={item}
-                onClick={() => setFilter(item)}
-                className={`shrink-0 rounded-full px-4 py-2 text-sm font-bold transition ${
-                  filter === item
-                    ? "bg-[#163F74] text-white"
-                    : "border border-[#DCE3EE] bg-white text-[#5A6A7F] hover:bg-[#F2F5F9]"
-                }`}
-              >
-                {item}
-              </button>
-            ))}
-          </div>
-        )}
+        <SearchField value={query} onChange={setQuery} onSearch={onSearch} />
       </div>
-      {searchActive && (
-        <section className="min-h-[420px] px-4 py-5 sm:px-6">
-          {!normalizedQuery ? (
-            <div className="py-20 text-center">
-              <Search size={28} className="mx-auto text-[#A0AAB7]" />
-              <p className="mt-3 font-bold">Search {searchTab.toLowerCase()}</p>
-              <p className="mt-1 text-sm text-[#7B899B]">
-                {searchTab === "Posts"
-                  ? "Find posts by words, names, or hashtags."
-                  : "Find people by their display name."}
-              </p>
-            </div>
-          ) : searchTab === "People" ? (
-            matchingPeople.length > 0 ? (
-              <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                {matchingPeople.map((person) => (
-                  <button
-                    key={person.name}
-                    onClick={() =>
-                      onViewProfile({
-                        name: person.name,
-                        handle: person.handle,
-                        initials: person.initials,
-                        tone: person.tone,
-                        online: onlineFriends.some((friend) => friend.name === person.name),
-                        status: "status" in person ? person.status : undefined,
-                      })
-                    }
-                    className="flex items-center gap-3 rounded-xl border border-[#E1E7EE] p-3 text-left hover:bg-[#F7F9FC]"
-                  >
-                    <Avatar text={person.initials} tone={person.tone} size="md" />
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-bold">{person.name}</p>
-                      <p className="text-[11px] text-[#7B899B]">Westbridge School</p>
-                    </div>
-                    <ChevronRight size={16} className="text-[#9AA6B5]" />
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <div className="py-20 text-center">
-                <Search size={28} className="mx-auto text-[#A0AAB7]" />
-                <p className="mt-3 font-bold">No people found</p>
-                <p className="mt-1 text-sm text-[#7B899B]">Try a different display name.</p>
-              </div>
-            )
-          ) : matchingPosts.length > 0 ? (
-            <div className="-mx-4 -my-5 sm:-mx-6">
-              {matchingPosts.map((post) => (
-                <PostCard
-                  key={post.id}
-                  post={post}
-                  onLike={() => undefined}
-                  onBookmark={() => undefined}
-                  onOpen={onOpen}
-                  onMenu={() => undefined}
-                  flash={flash}
-                />
-              ))}
-            </div>
-          ) : (
-            <div className="py-20 text-center">
-              <Search size={28} className="mx-auto text-[#A0AAB7]" />
-              <p className="mt-3 font-bold">No posts found</p>
-              <p className="mt-1 text-sm text-[#7B899B]">Try different words or a hashtag.</p>
-            </div>
-          )}
-        </section>
-      )}
-      <section
-        className={`${searchActive ? "hidden" : ""} border-b border-[#DCE3EE] px-4 py-5 sm:px-6`}
-      >
-        <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#7A899D]">
-          Featured conversation
-        </p>
-        <button
-          onClick={() => flash("Opening the conversation")}
-          className="mt-3 block w-full rounded-2xl border border-[#DCE3EE] bg-[#F7F9FC] p-5 text-left transition hover:border-[#B8C7DA] sm:p-6"
-        >
-          <div className="flex items-center gap-3">
-            <Avatar text="W" tone="bg-[#123B72] text-white" size="sm" />
-            <div>
-              <p className="text-sm font-extrabold">Westbridge School</p>
-              <p className="text-xs text-[#7B899B]">32m</p>
-            </div>
-          </div>
-          <p className="mt-4 text-lg font-bold leading-7 text-[#263750]">
-            What is one change that would make learning better for you?
-          </p>
-          <p className="mt-3 text-sm leading-6 text-[#66768A]">
-            Share a thoughtful suggestion and discuss ideas respectfully with other students.
-          </p>
-          <p className="mt-4 text-xs font-bold text-[#1E63B5]">48 replies · Join conversation</p>
-        </button>
-      </section>
-      <section className={`${searchActive ? "hidden" : ""} border-b border-[#DCE3EE] py-4`}>
+      <section className="border-b border-[#DCE3EE] py-4">
         <h2 className="px-4 text-lg font-extrabold sm:px-6">Trending now</h2>
         {trends.map((trend, index) => (
           <button
@@ -877,41 +862,17 @@ function ExplorePage({
           </button>
         ))}
       </section>
-      <section className={`${searchActive ? "hidden" : ""} p-4 sm:p-6`}>
-        <h2 className="text-lg font-extrabold">People you may know</h2>
-        <p className="mt-1 text-xs text-[#7B899B]">Based on classes and mutual friends</p>
-        <div className="mt-3 grid gap-3 sm:grid-cols-3">
-          {people.map((person) => (
-            <div
-              key={person.name}
-              className="rounded-2xl border border-[#DFE5ED] p-4 sm:text-center"
-            >
-              <div className="flex items-center gap-3 sm:flex-col">
-                <Avatar text={person.initials} tone={person.tone} size="lg" />
-                <div className="min-w-0 flex-1 sm:w-full">
-                  <p className="truncate text-sm font-extrabold">{person.name}</p>
-                  <p className="truncate text-xs text-[#7C899B]">Westbridge School</p>
-                </div>
-                <button
-                  onClick={() => flash(`Friend request sent to ${person.name}`)}
-                  className="rounded-full bg-[#14233C] px-3.5 py-2 text-xs font-bold text-white"
-                >
-                  Add friend
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
     </>
   );
 }
 
 function FriendsPage({
   onViewProfile,
+  onOpenSettings,
   flash,
 }: {
   onViewProfile: (profile: UserProfile) => void;
+  onOpenSettings: () => void;
   flash: (message: string) => void;
 }) {
   const [activeTab, setActiveTab] = useState<"Friends" | "Requests" | "Sent">("Friends");
@@ -960,15 +921,7 @@ function FriendsPage({
       <PageHeader
         title="Friends"
         subtitle="126 friends"
-        action={
-          <button
-            onClick={() => flash("Friend settings")}
-            className="grid h-10 w-10 place-items-center rounded-full text-[#66758A] hover:bg-[#EEF3F8]"
-            aria-label="Friend settings"
-          >
-            <Settings size={20} />
-          </button>
-        }
+        action={<SettingsButton onClick={onOpenSettings} />}
       />
       <div className="grid grid-cols-3 border-b border-[#DCE3EE] bg-white px-2 sm:px-4">
         {[
@@ -1112,31 +1065,22 @@ function FriendsPage({
             </button>
           </div>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
-            {[...onlineFriends, ...people.slice(0, 2)].map((friend, index) => (
+            {friends.map((friend) => (
               <button
-                key={friend.name}
-                onClick={() =>
-                  onViewProfile({
-                    name: friend.name,
-                    handle: friend.handle,
-                    initials: friend.initials,
-                    tone: friend.tone,
-                    online: index < onlineFriends.length,
-                    status: "status" in friend ? friend.status : undefined,
-                  })
-                }
+                key={friend.handle}
+                onClick={() => onViewProfile(friend)}
                 className="flex items-center gap-3 rounded-xl border border-[#E3E8EF] p-3 text-left hover:bg-[#F8FAFC]"
               >
                 <div className="relative">
                   <Avatar text={friend.initials} tone={friend.tone} size="md" />
-                  {index < onlineFriends.length && (
+                  {friend.online && (
                     <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-white bg-[#2AAF72]" />
                   )}
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-bold">{friend.name}</p>
                   <p className="truncate text-[11px] text-[#7B899B]">
-                    {"status" in friend ? friend.status : "12 mutual friends"}
+                    {friend.status ?? "12 mutual friends"}
                   </p>
                 </div>
                 <ChevronRight size={16} className="text-[#9AA6B5]" />
@@ -1149,7 +1093,7 @@ function FriendsPage({
   );
 }
 
-function NotificationsPage() {
+function NotificationsPage({ onOpenSettings }: { onOpenSettings: () => void }) {
   const notifications = [
     {
       icon: Heart,
@@ -1159,14 +1103,6 @@ function NotificationsPage() {
       text: "Maya Chen and 8 others liked your post.",
       time: "12m",
       note: "This revision method was really helpful—thank you!",
-    },
-    {
-      icon: UserPlus,
-      color: "bg-[#E9F2FC] text-[#1E63B5]",
-      avatar: "SB",
-      tone: "bg-[#DCC8ED] text-[#432D58]",
-      text: "Ms. Brooks sent you a friend request.",
-      time: "1h",
     },
     {
       icon: MessageCircle,
@@ -1190,15 +1126,7 @@ function NotificationsPage() {
     <>
       <PageHeader
         title="Notifications"
-        action={
-          <button
-            onClick={() => flash("Notification settings")}
-            className="grid h-10 w-10 place-items-center rounded-full text-[#66758A] hover:bg-[#EEF3F8]"
-            aria-label="Notification settings"
-          >
-            <Settings size={20} />
-          </button>
-        }
+        action={<SettingsButton onClick={onOpenSettings} />}
       />
       <div>
         {notifications.map((item, index) => {
@@ -1410,108 +1338,27 @@ function MessagesPage({ flash }: { flash: (message: string) => void }) {
   );
 }
 
-function BookmarksPage({
-  posts,
-  onLike,
-  onBookmark,
-  onOpen,
-  onMenu,
-  flash,
-}: {
-  posts: Post[];
-  onLike: (id: number) => void;
-  onBookmark: (id: number) => void;
-  onOpen: (post: Post) => void;
-  onMenu: (target: MenuTarget) => void;
-  flash: (message: string) => void;
-}) {
-  const saved = posts.filter((post) => post.bookmarked);
-  return (
-    <>
-      <PageHeader
-        title="Bookmarks"
-        subtitle={`${saved.length} saved posts`}
-        action={
-          <button
-            onClick={() => flash("Bookmark options")}
-            className="grid h-10 w-10 place-items-center rounded-full text-[#66758A] hover:bg-[#EEF3F8]"
-          >
-            <Ellipsis size={20} />
-          </button>
-        }
-      />
-      <div className="border-b border-[#DCE3EE] p-4 sm:p-5">
-        <label className="flex items-center gap-3 rounded-xl bg-[#EFF3F8] px-4 py-3">
-          <Search size={17} className="text-[#718097]" />
-          <input
-            className="min-w-0 flex-1 bg-transparent text-sm outline-none"
-            placeholder="Search bookmarks"
-          />
-        </label>
-      </div>
-      {saved.length ? (
-        saved.map((post) => (
-          <PostCard
-            key={post.id}
-            post={post}
-            onLike={onLike}
-            onBookmark={onBookmark}
-            onOpen={onOpen}
-            onMenu={onMenu}
-            flash={flash}
-          />
-        ))
-      ) : (
-        <div className="mx-auto max-w-sm px-8 py-20 text-center">
-          <div className="mx-auto grid h-16 w-16 place-items-center rounded-2xl bg-[#EAF2FC] text-[#1E63B5]">
-            <Bookmark size={28} />
-          </div>
-          <h2 className="mt-5 text-xl font-extrabold">Save posts for later</h2>
-          <p className="mt-2 text-sm leading-6 text-[#718097]">
-            Bookmark any useful announcement, resource or update and it will appear here.
-          </p>
-        </div>
-      )}
-    </>
-  );
-}
-
 function ProfilePage({
+  profile,
   posts,
   navigate,
+  onEditProfile,
   onLike,
-  onBookmark,
   onOpen,
   onMenu,
   flash,
 }: {
+  profile: AccountProfile;
   posts: Post[];
   navigate: (page: Page) => void;
+  onEditProfile: () => void;
   onLike: (id: number) => void;
-  onBookmark: (id: number) => void;
   onOpen: (post: Post) => void;
   onMenu: (target: MenuTarget) => void;
   flash: (message: string) => void;
 }) {
   const [tab, setTab] = useState("Posts");
-  const [editOpen, setEditOpen] = useState(false);
-  const [profileData, setProfileData] = useState({
-    name: "Alex Morgan",
-    bio: "Music, science and reading.",
-    year: "Year 11",
-    house: "Ash House",
-  });
-  const [editDraft, setEditDraft] = useState(profileData);
-  const [profileAvatar, setProfileAvatar] = useState<string | null>(null);
-  const [editAvatar, setEditAvatar] = useState<string | null>(null);
   const ownPosts = posts.filter((post) => post.handle === "@alexm");
-  const profileInitials = profileData.name
-    .split(" ")
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0])
-    .join("")
-    .toUpperCase();
   const ownReplies = [
     {
       id: 1,
@@ -1531,235 +1378,26 @@ function ProfilePage({
   return (
     <>
       <PageHeader
-        title={profileData.name}
+        title={profile.name}
         subtitle={`${ownPosts.length || 12} posts`}
-        action={
-          <button
-            onClick={() => navigate("Settings")}
-            className="grid h-10 w-10 place-items-center rounded-full text-[#66758A] hover:bg-[#EEF3F8]"
-          >
-            <Settings size={20} />
-          </button>
-        }
+        action={<SettingsButton onClick={() => navigate("Settings")} />}
       />
-      {editOpen && (
-        <div
-          className="fixed inset-0 z-[80] flex items-end justify-center bg-[#0D1B2A]/45 p-0 backdrop-blur-[2px] sm:items-center sm:p-5"
-          onClick={() => setEditOpen(false)}
-        >
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (!editDraft.name.trim()) return;
-              setProfileData({
-                ...editDraft,
-                name: editDraft.name.trim(),
-                bio: editDraft.bio.trim(),
-              });
-              setProfileAvatar(editAvatar);
-              setEditOpen(false);
-              flash("Profile updated");
-            }}
-            onClick={(event) => event.stopPropagation()}
-            className="max-h-[92vh] w-full overflow-y-auto rounded-t-[24px] bg-white shadow-2xl sm:max-w-[500px] sm:rounded-2xl"
-          >
-            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-[#E1E7EE] bg-white px-5 py-4">
-              <div>
-                <h2 className="text-lg font-extrabold">Edit profile</h2>
-                <p className="mt-0.5 text-xs text-[#7B899B]">Update how others see you</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setEditOpen(false)}
-                className="grid h-9 w-9 place-items-center rounded-full text-[#68788C] hover:bg-[#EEF2F6]"
-                aria-label="Close edit profile"
-              >
-                <X size={19} />
-              </button>
-            </div>
-
-            <div className="p-5 sm:p-6">
-              <div className="flex items-center gap-4 rounded-2xl bg-[#F4F7FA] p-4">
-                {editAvatar ? (
-                  <img
-                    src={editAvatar}
-                    alt="New avatar preview"
-                    className="h-14 w-14 shrink-0 rounded-full object-cover shadow-sm ring-2 ring-white"
-                  />
-                ) : (
-                  <Avatar
-                    text={
-                      editDraft.name
-                        .split(" ")
-                        .filter(Boolean)
-                        .slice(0, 2)
-                        .map((part) => part[0])
-                        .join("")
-                        .toUpperCase() || "AM"
-                    }
-                    tone="bg-[#F0C966] text-[#493407]"
-                    size="lg"
-                  />
-                )}
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-bold">Profile avatar</p>
-                  <p className="mt-1 text-xs leading-5 text-[#748397]">
-                    JPG, PNG or WebP. Maximum file size 5 MB.
-                  </p>
-                  <div className="mt-2 flex flex-wrap items-center gap-2">
-                    <label className="cursor-pointer rounded-full bg-[#1E63B5] px-3 py-1.5 text-[11px] font-bold text-white hover:bg-[#174F91]">
-                      {editAvatar ? "Change avatar" : "Upload avatar"}
-                      <input
-                        type="file"
-                        accept="image/jpeg,image/png,image/webp"
-                        className="sr-only"
-                        onChange={(event) => {
-                          const file = event.target.files?.[0];
-                          if (!file) return;
-                          if (file.size > 5 * 1024 * 1024) {
-                            flash("Avatar must be smaller than 5 MB");
-                            event.target.value = "";
-                            return;
-                          }
-                          setEditAvatar(URL.createObjectURL(file));
-                          event.target.value = "";
-                        }}
-                      />
-                    </label>
-                    {editAvatar && (
-                      <button
-                        type="button"
-                        onClick={() => setEditAvatar(null)}
-                        className="px-2 py-1.5 text-[11px] font-bold text-[#C84747] hover:underline"
-                      >
-                        Remove
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              <label className="mt-5 block">
-                <span className="text-xs font-bold text-[#526278]">Display name</span>
-                <input
-                  value={editDraft.name}
-                  onChange={(event) =>
-                    setEditDraft((current) => ({
-                      ...current,
-                      name: event.target.value.slice(0, 40),
-                    }))
-                  }
-                  required
-                  className="mt-2 w-full rounded-xl border border-[#CCD5E0] px-4 py-3 text-sm outline-none transition focus:border-[#1E63B5] focus:ring-2 focus:ring-[#D8E8F8]"
-                  placeholder="Your name"
-                />
-                <span className="mt-1.5 block text-right text-[11px] text-[#8B98A9]">
-                  {editDraft.name.length}/40
-                </span>
-              </label>
-
-              <label className="mt-3 block">
-                <span className="text-xs font-bold text-[#526278]">Bio</span>
-                <textarea
-                  value={editDraft.bio}
-                  onChange={(event) =>
-                    setEditDraft((current) => ({
-                      ...current,
-                      bio: event.target.value.slice(0, 120),
-                    }))
-                  }
-                  rows={3}
-                  className="mt-2 w-full resize-none rounded-xl border border-[#CCD5E0] px-4 py-3 text-sm leading-6 outline-none transition focus:border-[#1E63B5] focus:ring-2 focus:ring-[#D8E8F8]"
-                  placeholder="Tell your friends a little about yourself"
-                />
-                <span className="mt-1.5 block text-right text-[11px] text-[#8B98A9]">
-                  {editDraft.bio.length}/120
-                </span>
-              </label>
-
-              <div className="mt-3 grid gap-4 sm:grid-cols-2">
-                <label className="block">
-                  <span className="text-xs font-bold text-[#526278]">Year group</span>
-                  <select
-                    value={editDraft.year}
-                    onChange={(event) =>
-                      setEditDraft((current) => ({ ...current, year: event.target.value }))
-                    }
-                    className="mt-2 w-full rounded-xl border border-[#CCD5E0] bg-white px-4 py-3 text-sm outline-none focus:border-[#1E63B5] focus:ring-2 focus:ring-[#D8E8F8]"
-                  >
-                    {["Year 7", "Year 8", "Year 9", "Year 10", "Year 11", "Year 12", "Year 13"].map(
-                      (year) => (
-                        <option key={year}>{year}</option>
-                      ),
-                    )}
-                  </select>
-                </label>
-                <label className="block">
-                  <span className="text-xs font-bold text-[#526278]">House</span>
-                  <select
-                    value={editDraft.house}
-                    onChange={(event) =>
-                      setEditDraft((current) => ({ ...current, house: event.target.value }))
-                    }
-                    className="mt-2 w-full rounded-xl border border-[#CCD5E0] bg-white px-4 py-3 text-sm outline-none focus:border-[#1E63B5] focus:ring-2 focus:ring-[#D8E8F8]"
-                  >
-                    {["Ash House", "Cedar House", "Elm House", "Oak House"].map((house) => (
-                      <option key={house}>{house}</option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-            </div>
-
-            <div className="sticky bottom-0 flex flex-col-reverse gap-2 border-t border-[#E1E7EE] bg-white p-4 sm:flex-row sm:justify-end">
-              <button
-                type="button"
-                onClick={() => setEditOpen(false)}
-                className="rounded-xl border border-[#D3DBE5] px-5 py-3 text-sm font-bold text-[#53647A] hover:bg-[#F4F7FA]"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={!editDraft.name.trim()}
-                className="rounded-xl bg-[#1E63B5] px-5 py-3 text-sm font-bold text-white hover:bg-[#174F91] disabled:opacity-40"
-              >
-                Save changes
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
       <div className="px-4 pb-4 pt-5 sm:px-6 sm:pt-6">
-        <div className="flex items-end justify-between">
-          {profileAvatar ? (
-            <img
-              src={profileAvatar}
-              alt={`${profileData.name} avatar`}
-              className="h-24 w-24 rounded-full object-cover shadow-sm ring-2 ring-white"
-            />
-          ) : (
-            <Avatar text={profileInitials || "AM"} tone="bg-[#F0C966] text-[#493407]" size="xl" />
-          )}
+        <div className="flex items-end justify-between gap-3">
+          <ProfileAvatar profile={profile} size="xl" />
           <button
-            onClick={() => {
-              setEditDraft(profileData);
-              setEditAvatar(profileAvatar);
-              setEditOpen(true);
-            }}
-            className="mb-1 rounded-full border border-[#BFC9D6] bg-white px-4 py-2 text-sm font-bold hover:bg-[#F5F7FA]"
+            type="button"
+            onClick={onEditProfile}
+            className="mb-1 min-h-11 rounded-full border border-[#BFC9D6] bg-white px-4 text-sm font-bold hover:bg-[#F5F7FA] focus-visible:outline-[#1E63B5]"
           >
             Edit profile
           </button>
         </div>
-        <h2 className="mt-3 text-xl font-extrabold">{profileData.name}</h2>
-        <p className="mt-4 text-sm leading-6 text-[#33445C]">{profileData.bio}</p>
+        <h2 className="mt-3 text-xl font-extrabold">{profile.name}</h2>
+        <p className="mt-4 text-sm leading-6 text-[#33445C]">{profile.bio}</p>
         <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-xs text-[#728196]">
           <span className="flex items-center gap-1.5">
             <MapPin size={14} /> Westbridge School
-          </span>
-          <span>
-            {profileData.year} · {profileData.house}
           </span>
         </div>
         <div className="mt-4 flex gap-5 text-sm">
@@ -1767,15 +1405,6 @@ function ProfilePage({
             <strong>126</strong> <span className="text-[#7C899B]">Friends</span>
           </button>
         </div>
-        <button
-          onClick={() => navigate("Bookmarks")}
-          className="mt-5 flex w-full items-center justify-between rounded-xl bg-[#F1F5FA] px-4 py-3 text-left sm:hidden"
-        >
-          <span className="flex items-center gap-2 text-sm font-bold">
-            <Bookmark size={18} className="text-[#1E63B5]" /> Saved posts
-          </span>
-          <ChevronRight size={18} className="text-[#8090A3]" />
-        </button>
       </div>
       <div className="grid grid-cols-3 border-b border-[#DCE3EE]">
         {["Posts", "Replies", "Likes"].map((item) => (
@@ -1800,7 +1429,6 @@ function ProfilePage({
               key={post.id}
               post={post}
               onLike={onLike}
-              onBookmark={onBookmark}
               onOpen={onOpen}
               onMenu={onMenu}
               flash={flash}
@@ -1820,12 +1448,12 @@ function ProfilePage({
             return (
               <article key={item.id} className="border-b border-[#E1E7EF] px-4 py-5 sm:px-6">
                 <div className="flex gap-3">
-                  <Avatar text="AM" tone="bg-[#F0C966] text-[#493407]" size="lg" />
+                  <ProfileAvatar profile={profile} size="lg" />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <div className="flex min-w-0 items-center gap-1.5">
-                          <p className="truncate text-sm font-extrabold">Alex Morgan</p>
+                          <p className="truncate text-sm font-extrabold">{profile.name}</p>
                           <span className="text-xs text-[#A0AAB7]">·</span>
                           <span className="shrink-0 text-xs text-[#7B899B]">{item.time}</span>
                         </div>
@@ -1842,7 +1470,7 @@ function ProfilePage({
                       <button
                         onClick={() =>
                           onMenu({
-                            name: "Alex Morgan",
+                            name: profile.name,
                             handle: "@alexm",
                             kind: "comment",
                           })
@@ -1874,7 +1502,6 @@ function ProfilePage({
                 key={post.id}
                 post={post}
                 onLike={onLike}
-                onBookmark={onBookmark}
                 onOpen={onOpen}
                 onMenu={onMenu}
                 flash={flash}
@@ -1886,14 +1513,186 @@ function ProfilePage({
   );
 }
 
-function SettingsPage({
-  navigate,
+type ProfileDetails = Omit<AccountProfile, "photo">;
+
+function AvatarEditor({
+  profile,
+  onSave,
+  onCancel,
   flash,
 }: {
-  navigate: (page: Page) => void;
+  profile: AccountProfile;
+  onSave: (photo: File | null) => void;
+  onCancel: () => void;
   flash: (message: string) => void;
 }) {
-  const [openSection, setOpenSection] = useState<"email" | "password" | "sessions" | null>(null);
+  const [photo, setPhoto] = useState(profile.photo);
+
+  return (
+    <form
+      aria-label="Edit avatar"
+      className="space-y-5 rounded-2xl border border-[#DFE5ED] bg-white p-5 sm:p-6"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (photo !== profile.photo) onSave(photo);
+      }}
+    >
+      <div className="flex flex-wrap items-center gap-4">
+        <ProfileAvatar profile={{ ...profile, photo }} size="xl" />
+        <div>
+          <label className="inline-block cursor-pointer rounded-xl bg-[#1E63B5] px-4 py-2 text-sm font-bold text-white focus-within:ring-2 focus-within:ring-[#1E63B5] focus-within:ring-offset-2 hover:bg-[#174F91]">
+            {photo ? "Change image" : "Choose image"}
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              className="sr-only"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.target.value = "";
+                if (!file) return;
+                if (file.size > 5 * 1024 * 1024) {
+                  flash("Avatar must be 5 MB or smaller");
+                  return;
+                }
+                if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+                  flash("Choose a JPG, PNG or WebP image");
+                  return;
+                }
+                setPhoto(file);
+              }}
+            />
+          </label>
+          {photo && (
+            <button
+              type="button"
+              onClick={() => setPhoto(null)}
+              className="ml-2 rounded-xl px-3 py-2 text-sm font-bold text-[#C84747] hover:bg-[#FFF4F4]"
+            >
+              Remove avatar
+            </button>
+          )}
+          <p className="mt-2 text-xs text-[#66768A]">JPG, PNG or WebP, up to 5 MB.</p>
+        </div>
+      </div>
+      <div className="flex justify-end gap-2">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="rounded-xl border border-[#D3DBE5] px-4 py-2.5 text-sm font-bold text-[#53647A] hover:bg-[#F4F7FA]"
+        >
+          Cancel
+        </button>
+        <button
+          type="submit"
+          disabled={photo === profile.photo}
+          className="rounded-xl bg-[#1E63B5] px-4 py-2.5 text-sm font-bold text-white hover:bg-[#174F91] disabled:opacity-40"
+        >
+          Save avatar
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function ProfileDetailsForm({
+  profile: { name, bio },
+  onSave,
+  onCancel,
+}: {
+  profile: ProfileDetails;
+  onSave: (details: ProfileDetails) => void;
+  onCancel: () => void;
+}) {
+  const [editDraft, setEditDraft] = useState({ name, bio });
+
+  return (
+    <form
+      aria-label="Profile details"
+      onSubmit={(event) => {
+        event.preventDefault();
+        const name = editDraft.name.trim();
+        if (name) onSave({ ...editDraft, name, bio: editDraft.bio.trim() });
+      }}
+      className="overflow-hidden rounded-2xl border border-[#DFE5ED] bg-white"
+    >
+      <div className="p-5 sm:p-6">
+        <label className="block">
+          <span className="text-xs font-bold text-[#526278]">Display name</span>
+          <input
+            value={editDraft.name}
+            onChange={(event) =>
+              setEditDraft((current) => ({
+                ...current,
+                name: event.target.value.slice(0, 40),
+              }))
+            }
+            required
+            className="mt-2 w-full rounded-xl border border-[#CCD5E0] px-4 py-3 text-sm outline-none transition focus:border-[#1E63B5] focus:ring-2 focus:ring-[#D8E8F8]"
+            placeholder="Your name"
+          />
+          <span className="mt-1.5 block text-right text-[11px] text-[#8B98A9]">
+            {editDraft.name.length}/40
+          </span>
+        </label>
+
+        <label className="mt-3 block">
+          <span className="text-xs font-bold text-[#526278]">Bio</span>
+          <textarea
+            value={editDraft.bio}
+            onChange={(event) =>
+              setEditDraft((current) => ({
+                ...current,
+                bio: event.target.value.slice(0, 120),
+              }))
+            }
+            rows={3}
+            className="mt-2 w-full resize-none rounded-xl border border-[#CCD5E0] px-4 py-3 text-sm leading-6 outline-none transition focus:border-[#1E63B5] focus:ring-2 focus:ring-[#D8E8F8]"
+            placeholder="Tell your friends a little about yourself"
+          />
+          <span className="mt-1.5 block text-right text-[11px] text-[#8B98A9]">
+            {editDraft.bio.length}/120
+          </span>
+        </label>
+
+      </div>
+
+      <div className="flex flex-col-reverse gap-2 border-t border-[#E1E7EE] bg-white p-4 sm:flex-row sm:justify-end">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="rounded-xl border border-[#D3DBE5] px-5 py-3 text-sm font-bold text-[#53647A] hover:bg-[#F4F7FA]"
+        >
+          Cancel
+        </button>
+        <button
+          type="submit"
+          disabled={!editDraft.name.trim()}
+          className="rounded-xl bg-[#1E63B5] px-5 py-3 text-sm font-bold text-white hover:bg-[#174F91] disabled:opacity-40"
+        >
+          Save profile details
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function SettingsPage({
+  view,
+  setView,
+  profile,
+  onSaveProfile,
+  onLogOut,
+  onBack,
+  flash,
+}: {
+  view: SettingsView;
+  setView: (view: SettingsView) => void;
+  profile: AccountProfile;
+  onSaveProfile: (profile: AccountProfile) => void;
+  onLogOut: () => void;
+  onBack: () => void;
+  flash: (message: string) => void;
+}) {
   const [email, setEmail] = useState("alex.morgan@westbridge.school");
   const [savedEmail, setSavedEmail] = useState(email);
   const [passwords, setPasswords] = useState({
@@ -1928,46 +1727,97 @@ function SettingsPage({
     passwords.current.length > 0 &&
     passwords.next.length >= 8 &&
     passwords.next === passwords.confirm;
+  const titles: Record<SettingsView, string> = {
+    overview: "Settings",
+    profile: "Update profile",
+    avatar: "Edit avatar",
+    email: "Email address",
+    password: "Change password",
+    sessions: "Active sessions",
+  };
 
   return (
     <>
       <header className="sticky top-0 z-30 flex h-[68px] items-center gap-3 border-b border-[#DCE3EE] bg-white/90 px-3 backdrop-blur-xl sm:px-5">
         <button
+          autoFocus
           onClick={() => {
-            if (openSection) {
-              setOpenSection(null);
+            if (view === "avatar") {
+              setView("profile");
+            } else if (view !== "overview") {
+              setView("overview");
             } else {
-              navigate("Profile");
+              onBack();
             }
           }}
-          className="grid h-10 w-10 place-items-center rounded-full text-[#5E6E83] hover:bg-[#EEF3F8]"
-          aria-label="Back to profile"
+          className="grid h-11 w-11 place-items-center rounded-full text-[#5E6E83] hover:bg-[#EEF3F8]"
+          aria-label={view === "avatar" ? "Back to update profile" : view === "overview" ? "Back to previous page" : "Back to settings"}
         >
           <ArrowLeft size={20} />
         </button>
         <div>
           <h1 className="text-xl font-extrabold tracking-[-0.03em]">
-            {openSection === "email"
-              ? "Email address"
-              : openSection === "password"
-                ? "Change password"
-                : openSection === "sessions"
-                  ? "Active sessions"
-                  : "Settings"}
+            {titles[view]}
           </h1>
           <p className="text-xs text-[#7B899B]">
-            {openSection ? "Account settings" : "Account and security"}
+            {view !== "overview" ? "Account settings" : "Account and security"}
           </p>
         </div>
       </header>
 
       <div className="space-y-5 bg-[#F8FAFC] p-4 sm:p-6">
-        {(openSection === null || openSection === "email") && (
+        {view === "overview" && (
+          <button
+            onClick={() => setView("profile")}
+            className="flex w-full items-center gap-3 rounded-2xl border border-[#DFE5ED] bg-white p-4 text-left hover:bg-[#F6F8FB] sm:px-5"
+          >
+            <ProfileAvatar profile={profile} size="md" />
+            <span className="min-w-0 flex-1">
+              <span className="block font-extrabold">Update profile</span>
+              <span className="mt-0.5 block truncate text-xs text-[#7B899B]">{profile.name}</span>
+            </span>
+            <ChevronRight size={18} className="text-[#8A98A9]" />
+          </button>
+        )}
+        {(view === "profile" || view === "avatar") && (
+          <div hidden={view === "avatar"} className="space-y-5">
+            <button
+              onClick={() => setView("avatar")}
+              className="flex w-full items-center gap-3 rounded-2xl border border-[#DFE5ED] bg-white p-4 text-left font-bold hover:bg-[#F6F8FB] sm:px-5"
+            >
+              <ProfileAvatar profile={profile} size="lg" />
+              Edit avatar
+              <ChevronRight size={18} className="ml-auto text-[#8A98A9]" />
+            </button>
+            <ProfileDetailsForm
+              profile={profile}
+              onCancel={() => setView("overview")}
+              onSave={(details) => {
+                onSaveProfile({ ...profile, ...details });
+                setView("overview");
+                flash("Profile updated");
+              }}
+            />
+          </div>
+        )}
+        {view === "avatar" && (
+          <AvatarEditor
+            profile={profile}
+            onCancel={() => setView("profile")}
+            onSave={(photo) => {
+              onSaveProfile({ ...profile, photo });
+              setView("profile");
+              flash("Avatar updated");
+            }}
+            flash={flash}
+          />
+        )}
+        {(view === "overview" || view === "email") && (
           <section className="overflow-hidden rounded-2xl border border-[#DFE5ED] bg-white">
             <button
-              onClick={() => setOpenSection(openSection === "email" ? null : "email")}
+              onClick={() => setView(view === "email" ? "overview" : "email")}
               className={`flex w-full items-center gap-3 px-4 py-4 text-left sm:px-5 ${
-                openSection === "email" ? "border-b border-[#E6EAF0]" : ""
+                view === "email" ? "border-b border-[#E6EAF0]" : ""
               }`}
             >
               <div className="grid h-10 w-10 place-items-center rounded-xl bg-[#EAF2FC] text-[#1E63B5]">
@@ -1980,11 +1830,11 @@ function SettingsPage({
               <ChevronRight
                 size={18}
                 className={`text-[#8A98A9] transition ${
-                  openSection === "email" ? "rotate-90 text-[#1E63B5]" : ""
+                  view === "email" ? "rotate-90 text-[#1E63B5]" : ""
                 }`}
               />
             </button>
-            {openSection === "email" && (
+            {view === "email" && (
               <form
                 onSubmit={(event) => {
                   event.preventDefault();
@@ -2020,12 +1870,12 @@ function SettingsPage({
           </section>
         )}
 
-        {(openSection === null || openSection === "password") && (
+        {(view === "overview" || view === "password") && (
           <section className="overflow-hidden rounded-2xl border border-[#DFE5ED] bg-white">
             <button
-              onClick={() => setOpenSection(openSection === "password" ? null : "password")}
+              onClick={() => setView(view === "password" ? "overview" : "password")}
               className={`flex w-full items-center gap-3 px-4 py-4 text-left sm:px-5 ${
-                openSection === "password" ? "border-b border-[#E6EAF0]" : ""
+                view === "password" ? "border-b border-[#E6EAF0]" : ""
               }`}
             >
               <div className="grid h-10 w-10 place-items-center rounded-xl bg-[#F1ECFA] text-[#7253A3]">
@@ -2040,11 +1890,11 @@ function SettingsPage({
               <ChevronRight
                 size={18}
                 className={`text-[#8A98A9] transition ${
-                  openSection === "password" ? "rotate-90 text-[#7253A3]" : ""
+                  view === "password" ? "rotate-90 text-[#7253A3]" : ""
                 }`}
               />
             </button>
-            {openSection === "password" && (
+            {view === "password" && (
               <form
                 onSubmit={(event) => {
                   event.preventDefault();
@@ -2110,12 +1960,12 @@ function SettingsPage({
           </section>
         )}
 
-        {(openSection === null || openSection === "sessions") && (
+        {(view === "overview" || view === "sessions") && (
           <section className="overflow-hidden rounded-2xl border border-[#DFE5ED] bg-white">
             <button
-              onClick={() => setOpenSection(openSection === "sessions" ? null : "sessions")}
+              onClick={() => setView(view === "sessions" ? "overview" : "sessions")}
               className={`flex w-full items-center gap-3 px-4 py-4 text-left sm:px-5 ${
-                openSection === "sessions" ? "border-b border-[#E6EAF0]" : ""
+                view === "sessions" ? "border-b border-[#E6EAF0]" : ""
               }`}
             >
               <div className="grid h-10 w-10 place-items-center rounded-xl bg-[#E8F6EF] text-[#23805C]">
@@ -2130,11 +1980,11 @@ function SettingsPage({
               <ChevronRight
                 size={18}
                 className={`text-[#8A98A9] transition ${
-                  openSection === "sessions" ? "rotate-90 text-[#23805C]" : ""
+                  view === "sessions" ? "rotate-90 text-[#23805C]" : ""
                 }`}
               />
             </button>
-            {openSection === "sessions" && (
+            {view === "sessions" && (
               <>
                 <div>
                   {sessions.map((session) => (
@@ -2192,17 +2042,17 @@ function SettingsPage({
           </section>
         )}
 
-        {openSection === null && (
+        {view === "overview" && (
           <section className="rounded-2xl border border-[#F0CECE] bg-white p-4 sm:p-5">
             <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
               <div>
                 <h2 className="font-extrabold">Log out of this account</h2>
                 <p className="mt-1 text-xs leading-5 text-[#7B899B]">
-                  You will need your email and password to sign in again.
+                  End your demo session in this tab.
                 </p>
               </div>
               <button
-                onClick={() => flash("Log out confirmation")}
+                onClick={onLogOut}
                 className="flex items-center justify-center gap-2 rounded-xl bg-[#C84747] px-4 py-3 text-sm font-bold text-white hover:bg-[#AD3939]"
               >
                 <LogOut size={17} /> Log out
@@ -2338,7 +2188,7 @@ function OtherProfilePage({
           )}
         </div>
         <p className="mt-4 text-sm leading-6 text-[#33445C]">
-          Year 11 · Cedar House · Interested in science, books and student voice.
+          Interested in science, books and student voice.
         </p>
         {profile.status && (
           <p className="mt-2 text-xs font-medium text-[#23805C]">{profile.status}</p>
@@ -2403,7 +2253,6 @@ function OtherProfilePage({
                   <span className="flex items-center gap-1.5">
                     <Heart size={16} /> 21
                   </span>
-                  <Bookmark size={16} />
                 </div>
               </div>
             </div>
@@ -2591,30 +2440,44 @@ function DeleteConfirmation({
 
 function SearchResultsPage({
   posts,
+  query,
+  submittedQuery,
+  onEdit,
+  onSearch,
   onBack,
   onOpenPost,
   onOpenProfile,
+  onLike,
+  onMenu,
+  flash,
 }: {
   posts: Post[];
+  query: string;
+  submittedQuery: string;
+  onEdit: (value: string) => void;
+  onSearch: (query: string) => void;
   onBack: () => void;
   onOpenPost: (post: Post) => void;
   onOpenProfile: (profile: UserProfile) => void;
+  onLike: (id: number) => void;
+  onMenu: (target: MenuTarget) => void;
+  flash: (message: string) => void;
 }) {
   const [tab, setTab] = useState<"Posts" | "People">("Posts");
-  const [query, setQuery] = useState("");
-  const normalizedQuery = query.trim().toLowerCase();
   const searchablePeople = [...onlineFriends, ...people].filter(
     (person, index, all) => all.findIndex((item) => item.name === person.name) === index,
   );
-  const peopleResults = searchablePeople.filter((person) =>
-    person.name.toLowerCase().includes(normalizedQuery),
-  );
-  const postResults = posts.filter(
-    (post) =>
-      post.text.toLowerCase().includes(normalizedQuery) ||
-      post.name.toLowerCase().includes(normalizedQuery) ||
-      post.tag?.toLowerCase().includes(normalizedQuery.replace("#", "")),
-  );
+  const peopleResults = submittedQuery
+    ? searchablePeople.filter((person) => person.name.toLowerCase().includes(submittedQuery))
+    : [];
+  const postResults = submittedQuery
+    ? posts.filter(
+        (post) =>
+          post.text.toLowerCase().includes(submittedQuery) ||
+          post.name.toLowerCase().includes(submittedQuery) ||
+          post.tag?.toLowerCase().includes(submittedQuery.replace("#", "")),
+      )
+    : [];
 
   return (
     <div className="flex min-h-[calc(100vh-72px)] flex-col bg-white">
@@ -2627,25 +2490,7 @@ function SearchResultsPage({
           >
             <ArrowLeft size={20} />
           </button>
-          <label className="flex min-w-0 flex-1 items-center gap-3 rounded-xl bg-[#EFF3F8] px-4 py-3">
-            <Search size={18} className="text-[#718097]" />
-            <input
-              autoFocus
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              className="min-w-0 flex-1 bg-transparent text-sm outline-none"
-              placeholder="Search Westbridge"
-            />
-            {query && (
-              <button
-                onClick={() => setQuery("")}
-                className="grid h-6 w-6 place-items-center rounded-full text-[#718097] hover:bg-[#DDE5ED]"
-                aria-label="Clear search"
-              >
-                <X size={14} />
-              </button>
-            )}
-          </label>
+          <SearchField value={query} onChange={onEdit} onSearch={onSearch} />
         </header>
         <div className="grid grid-cols-2 border-b border-[#DCE3EE] px-4">
           {(["Posts", "People"] as const).map((item) => (
@@ -2663,8 +2508,13 @@ function SearchResultsPage({
             </button>
           ))}
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          {!normalizedQuery ? (
+        <section
+          id="westbridge-search-results"
+          aria-label="Search results"
+          tabIndex={-1}
+          className="min-h-0 flex-1 overflow-y-auto"
+        >
+          {!submittedQuery ? (
             <div className="px-6 py-24 text-center">
               <Search size={30} className="mx-auto text-[#A0AAB7]" />
               <h2 className="mt-4 text-lg font-extrabold">Search {tab.toLowerCase()}</h2>
@@ -2677,22 +2527,14 @@ function SearchResultsPage({
           ) : tab === "Posts" ? (
             postResults.length ? (
               postResults.map((post) => (
-                <button
+                <PostCard
                   key={post.id}
-                  onClick={() => {
-                    onOpenPost(post);
-                  }}
-                  className="block w-full border-b border-[#E3E8EF] px-5 py-4 text-left hover:bg-[#F7F9FC]"
-                >
-                  <div className="flex items-center gap-3">
-                    <Avatar text={post.avatar} tone={post.avatarTone} size="sm" />
-                    <div>
-                      <p className="text-sm font-extrabold">{post.name}</p>
-                      <p className="text-[11px] text-[#8290A2]">{post.time}</p>
-                    </div>
-                  </div>
-                  <p className="mt-3 line-clamp-3 text-sm leading-6 text-[#405168]">{post.text}</p>
-                </button>
+                  post={post}
+                  onLike={onLike}
+                  onOpen={onOpenPost}
+                  onMenu={onMenu}
+                  flash={flash}
+                />
               ))
             ) : (
               <div className="px-6 py-24 text-center">
@@ -2703,7 +2545,8 @@ function SearchResultsPage({
           ) : peopleResults.length ? (
             <div className="grid gap-2 p-4 sm:grid-cols-2">
               {peopleResults.map((person) => {
-                const online = onlineFriends.some((friend) => friend.name === person.name);
+                const friend = onlineFriends.find((friend) => friend.handle === person.handle);
+                const online = Boolean(friend);
                 return (
                   <button
                     key={person.name}
@@ -2714,7 +2557,7 @@ function SearchResultsPage({
                         initials: person.initials,
                         tone: person.tone,
                         online,
-                        status: "status" in person ? person.status : undefined,
+                        status: friend?.status,
                       });
                     }}
                     className="flex items-center gap-3 rounded-xl border border-[#E1E7EE] p-3 text-left hover:bg-[#F7F9FC]"
@@ -2742,7 +2585,7 @@ function SearchResultsPage({
               <p className="mt-1 text-sm text-[#7B899B]">Try a different display name.</p>
             </div>
           )}
-        </div>
+        </section>
       </div>
     </div>
   );
@@ -2753,18 +2596,13 @@ function RightRail({
   onSearch,
 }: {
   navigate: (page: Page) => void;
-  onSearch: () => void;
+  onSearch: (query: string) => void;
 }) {
+  const [query, setQuery] = useState("");
   return (
     <aside className="hidden px-6 py-5 xl:block">
       <div className="sticky top-5 space-y-4">
-        <button
-          onClick={onSearch}
-          className="flex w-full items-center gap-3 rounded-xl bg-white px-4 py-3 text-left text-sm text-[#8795A7] shadow-sm ring-1 ring-transparent hover:ring-[#B8D3EF]"
-        >
-          <Search size={18} className="text-[#718097]" />
-          Search Westbridge
-        </button>
+        <SearchField value={query} onChange={setQuery} onSearch={onSearch} />
         <section className="overflow-hidden rounded-2xl border border-[#E0E6EE] bg-white py-3">
           <h2 className="px-5 pb-2 pt-1 text-lg font-extrabold">Popular discussions</h2>
           {trends.slice(0, 3).map((trend) => (
@@ -2795,8 +2633,184 @@ function RightRail({
   );
 }
 
+function MobileMoreNav({
+  currentPage,
+  navigate,
+}: {
+  currentPage: Page;
+  navigate: (page: Page) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const container = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const active = open || moreNavItems.some((item) => item.label === currentPage);
+
+  useEffect(() => {
+    if (!open) return;
+    const desktop = window.matchMedia("(min-width: 48rem)");
+    const closeOnDesktop = () => {
+      if (desktop.matches) setOpen(false);
+    };
+    const closeOnOutsidePress = (event: PointerEvent) => {
+      if (event.target instanceof Node && !container.current?.contains(event.target)) {
+        setOpen(false);
+      }
+    };
+    desktop.addEventListener("change", closeOnDesktop);
+    document.addEventListener("pointerdown", closeOnOutsidePress);
+    return () => {
+      desktop.removeEventListener("change", closeOnDesktop);
+      document.removeEventListener("pointerdown", closeOnOutsidePress);
+    };
+  }, [open]);
+
+  return (
+    <div
+      ref={container}
+      className="flex-1 md:hidden"
+      onBlur={(event) => {
+        if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+      }}
+      onKeyDown={(event) => {
+        if (open && event.key === "Escape") {
+          setOpen(false);
+          trigger.current?.focus();
+        }
+      }}
+    >
+      <button
+        ref={trigger}
+        type="button"
+        aria-expanded={open}
+        aria-controls="mobile-more-navigation"
+        onClick={() => setOpen(!open)}
+        className={`flex h-14 w-full flex-col items-center justify-center gap-0.5 rounded-xl text-xs font-semibold ${
+          active ? "bg-[#EAF2FC] text-[#175CA9]" : "text-[#516176] hover:bg-[#F0F4F9]"
+        }`}
+      >
+        <MoreHorizontal size={22} aria-hidden="true" />
+        More
+      </button>
+      <div
+        id="mobile-more-navigation"
+        role="group"
+        aria-label="More destinations"
+        hidden={!open}
+        className="absolute bottom-full right-2 mb-2 max-h-[calc(100dvh-5rem)] w-56 overflow-y-auto rounded-2xl border border-[#DCE3EE] bg-white p-1.5 shadow-lg"
+      >
+        {moreNavItems.map(({ label, icon: Icon, badge }) => (
+          <button
+            key={label}
+            type="button"
+            aria-current={currentPage === label ? "page" : undefined}
+            onClick={() => {
+              trigger.current?.focus();
+              setOpen(false);
+              navigate(label);
+            }}
+            className="flex min-h-11 w-full items-center gap-3 rounded-xl px-3 text-left text-sm font-semibold text-[#516176] hover:bg-[#F0F4F9] aria-[current=page]:bg-[#EAF2FC] aria-[current=page]:text-[#175CA9]"
+          >
+            <Icon size={20} aria-hidden="true" />
+            {label}
+            {badge && (
+              <span className="ml-auto rounded-full bg-[#E05454] px-1.5 text-xs text-white">
+                {badge}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SidebarProfile({
+  profile,
+  onOpenProfile,
+  onLogOut,
+}: {
+  profile: AccountProfile;
+  onOpenProfile: () => void;
+  onLogOut: () => void;
+}) {
+  const options = useRef<HTMLDetailsElement>(null);
+  const trigger = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    const dismissOutside = (event: PointerEvent) => {
+      const menu = options.current;
+      if (menu?.open && event.target instanceof Node && !menu.contains(event.target)) {
+        menu.open = false;
+      }
+    };
+    document.addEventListener("pointerdown", dismissOutside);
+    return () => document.removeEventListener("pointerdown", dismissOutside);
+  }, []);
+
+  return (
+    <div className="relative mb-6 mt-auto hidden items-center gap-1 md:flex">
+      <button
+        type="button"
+        onClick={onOpenProfile}
+        aria-label={`Open ${profile.name}’s profile`}
+        className="flex min-w-0 flex-1 items-center gap-3 rounded-xl p-2 text-left hover:bg-[#EEF2F7]"
+      >
+        <ProfileAvatar profile={profile} size="sm" />
+        <span className="hidden truncate text-sm font-bold xl:block">{profile.name}</span>
+      </button>
+      <details
+        ref={options}
+        className="hidden xl:block"
+        onBlur={(event) => {
+          if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget)) {
+            event.currentTarget.open = false;
+          }
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Escape" && event.currentTarget.open) {
+            event.preventDefault();
+            event.currentTarget.open = false;
+            trigger.current?.focus();
+          }
+        }}
+      >
+        <summary
+          ref={trigger}
+          aria-label="Account options"
+          title="Account options"
+          className="grid h-11 w-11 cursor-pointer list-none place-items-center rounded-xl text-[#516176] hover:bg-[#EEF2F7] [&::-webkit-details-marker]:hidden"
+        >
+          <MoreHorizontal size={20} aria-hidden="true" />
+        </summary>
+        <div className="absolute inset-x-0 bottom-full mb-2 rounded-xl border border-[#DCE3EE] bg-white p-1.5 shadow-lg">
+          <button
+            type="button"
+            onClick={onLogOut}
+            className="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm font-bold text-[#B33E3E] hover:bg-[#FFF4F4]"
+          >
+            <LogOut size={18} aria-hidden="true" /> Log out
+          </button>
+        </div>
+      </details>
+    </div>
+  );
+}
+
+const signedOutKey = "westbridge.signedOut";
+
 export default function App() {
-  const [activePage, setActivePage] = useState<Page>("Home");
+  const [signedOut, setSignedOut] = useState(() => {
+    try {
+      return window.sessionStorage.getItem(signedOutKey) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [activePage, setActivePage] = useState<Exclude<Page, "Settings">>("Home");
+  const [settingsView, setSettingsView] = useState<SettingsView | null>(null);
+  const currentPage = settingsView ? "Settings" : activePage;
+  const settingsTrigger = useRef<HTMLElement | null>(null);
+  const [profile, setProfile] = useState(initialProfile);
   const [posts, setPosts] = useState(initialPosts);
   const [draft, setDraft] = useState("");
   const [toast, setToast] = useState("");
@@ -2804,22 +2818,82 @@ export default function App() {
   const [viewedProfile, setViewedProfile] = useState<UserProfile | null>(null);
   const [menuTarget, setMenuTarget] = useState<MenuTarget | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<MenuTarget | null>(null);
+  const searchOrigin = useRef({ activePage, selectedPost, viewedProfile, settingsView });
+  const [search, setSearch] = useState({ draft: "", submitted: "" });
 
   const flash = (message: string) => {
     setToast(message);
     window.setTimeout(() => setToast(""), 2200);
   };
 
-  const navigate = (page: Page) => {
-    setSelectedPost(null);
-    setViewedProfile(null);
-    setActivePage(page);
+  const navigate = (page: Page, section: SettingsView = "overview") => {
+    if (page === "Settings") {
+      if (settingsView === null && document.activeElement instanceof HTMLElement) {
+        settingsTrigger.current = document.activeElement;
+      }
+      setSettingsView(section);
+    } else {
+      setSettingsView(null);
+      setSelectedPost(null);
+      setViewedProfile(null);
+      setActivePage(page);
+    }
     window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const closeSettings = () => {
+    setSettingsView(null);
+    requestAnimationFrame(() => settingsTrigger.current?.focus());
+  };
+
+  const changeSession = (logOut: boolean) => {
+    try {
+      if (logOut) window.sessionStorage.setItem(signedOutKey, "1");
+      else window.sessionStorage.removeItem(signedOutKey);
+    } catch {
+      // Embedded previews may disable browser storage.
+    }
+    setSignedOut(logOut);
+    if (logOut) {
+      navigate("Home");
+      setDraft("");
+      setToast("");
+      setMenuTarget(null);
+      setDeleteTarget(null);
+      setSearch({ draft: "", submitted: "" });
+    }
+  };
+
+  const openSearch = (query: string) => {
+    if (activePage !== "Search") {
+      searchOrigin.current = { activePage, selectedPost, viewedProfile, settingsView };
+    }
+    setSearch({ draft: query, submitted: query.toLowerCase() });
+    navigate("Search");
+    requestAnimationFrame(() => {
+      document.getElementById("westbridge-search-results")?.focus({ preventScroll: true });
+    });
+  };
+
+  const closeSearch = () => {
+    const origin = searchOrigin.current;
+    navigate(origin.activePage);
+    setSelectedPost(origin.selectedPost);
+    setViewedProfile(origin.viewedProfile);
+    setSettingsView(origin.settingsView);
   };
 
   const openPost = (post: Post) => {
     setSelectedPost(post);
     window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const saveProfile = (updated: AccountProfile) => {
+    setProfile(updated);
+    const author = postAuthor(updated);
+    setPosts((current) =>
+      current.map((post) => (post.handle === "@alexm" ? { ...post, ...author } : post)),
+    );
   };
 
   const toggleLike = (id: number) => {
@@ -2832,21 +2906,14 @@ export default function App() {
     );
   };
 
-  const toggleBookmark = (id: number) => {
-    setPosts((current) =>
-      current.map((post) => (post.id === id ? { ...post, bookmarked: !post.bookmarked } : post)),
-    );
-  };
-
   const publish = () => {
     if (!draft.trim()) return;
     setPosts((current) => [
       {
         id: Date.now(),
-        name: "Alex Morgan",
+        ...postAuthor(profile),
         handle: "@alexm",
         time: "now",
-        avatar: "AM",
         avatarTone: "bg-[#F0C966] text-[#493407]",
         text: draft.trim(),
         replies: 0,
@@ -2858,54 +2925,71 @@ export default function App() {
     flash("Your post was shared");
   };
 
+  if (signedOut) {
+    return (
+      <main className="grid min-h-screen place-content-center gap-5 bg-[#F7F9FC] px-6 text-center">
+        <h1 className="text-2xl font-extrabold text-[#14233C]">You’re logged out</h1>
+        <button
+          type="button"
+          autoFocus
+          onClick={() => changeSession(false)}
+          className="min-h-11 rounded-xl bg-[#1E63B5] px-5 text-sm font-bold text-white hover:bg-[#164F93]"
+        >
+          Open demo account
+        </button>
+      </main>
+    );
+  }
+
   const pageContent = {
     Home: (
       <HomePage
+        profile={profile}
         posts={posts}
         draft={draft}
         setDraft={setDraft}
         publish={publish}
         onLike={toggleLike}
-        onBookmark={toggleBookmark}
         onOpen={openPost}
         onMenu={setMenuTarget}
         flash={flash}
       />
     ),
-    Explore: (
-      <ExplorePage posts={posts} onOpen={openPost} onViewProfile={setViewedProfile} flash={flash} />
+    Explore: <ExplorePage onSearch={openSearch} flash={flash} />,
+    Friends: (
+      <FriendsPage
+        onViewProfile={setViewedProfile}
+        onOpenSettings={() => navigate("Settings")}
+        flash={flash}
+      />
     ),
-    Friends: <FriendsPage onViewProfile={setViewedProfile} flash={flash} />,
-    Notifications: <NotificationsPage />,
+    Notifications: <NotificationsPage onOpenSettings={() => navigate("Settings")} />,
     Messages: <MessagesPage flash={flash} />,
-    Bookmarks: (
-      <BookmarksPage
-        posts={posts}
-        onLike={toggleLike}
-        onBookmark={toggleBookmark}
-        onOpen={openPost}
-        onMenu={setMenuTarget}
-        flash={flash}
-      />
-    ),
     Profile: (
       <ProfilePage
+        profile={profile}
         posts={posts}
         navigate={navigate}
+        onEditProfile={() => navigate("Settings", "profile")}
         onLike={toggleLike}
-        onBookmark={toggleBookmark}
         onOpen={openPost}
         onMenu={setMenuTarget}
         flash={flash}
       />
     ),
-    Settings: <SettingsPage navigate={navigate} flash={flash} />,
     Search: (
       <SearchResultsPage
         posts={posts}
-        onBack={() => navigate("Home")}
+        query={search.draft}
+        submittedQuery={search.submitted}
+        onEdit={(draft) => setSearch({ draft, submitted: "" })}
+        onSearch={openSearch}
+        onBack={closeSearch}
         onOpenPost={openPost}
         onOpenProfile={setViewedProfile}
+        onLike={toggleLike}
+        onMenu={setMenuTarget}
+        flash={flash}
       />
     ),
   };
@@ -2940,7 +3024,7 @@ export default function App() {
         />
       )}
       <div className="mx-auto grid min-h-screen max-w-[1300px] grid-cols-1 md:grid-cols-[88px_minmax(0,680px)] xl:grid-cols-[250px_minmax(0,680px)_330px]">
-        <aside className="fixed bottom-0 left-0 right-0 z-40 border-t border-[#DCE3EE] bg-white/95 px-2 backdrop-blur-xl md:sticky md:top-0 md:h-screen md:border-r md:border-t-0 md:px-3 xl:px-5">
+        <aside className="fixed bottom-0 left-0 right-0 z-40 border-t border-[#DCE3EE] bg-white/95 px-1 backdrop-blur-xl md:sticky md:top-0 md:h-screen md:overflow-y-auto md:border-r md:border-t-0 md:px-3 xl:px-5">
           <div className="flex h-full items-center justify-around md:flex-col md:items-stretch md:justify-start">
             <button
               className="hidden h-20 items-center gap-3 px-3 md:flex"
@@ -2957,32 +3041,37 @@ export default function App() {
                 </p>
               </div>
             </button>
-            <nav className="flex w-full items-center justify-around md:flex-col md:items-stretch md:gap-1">
+            <nav
+              aria-label="Main navigation"
+              className="flex w-full items-center justify-around md:flex-col md:items-stretch md:gap-1"
+            >
               {navItems.map((item) => {
                 const Icon = item.icon;
-                const active = activePage === item.label;
-                const mobileHidden = item.label === "Bookmarks";
+                const active = currentPage === item.label;
                 return (
                   <button
                     key={item.label}
                     onClick={() => navigate(item.label)}
-                    className={`${mobileHidden ? "hidden md:flex" : "flex"} group relative items-center justify-center gap-4 rounded-xl px-3 py-3 text-left transition md:justify-start ${
+                    className={`${item.mobilePrimary ? "flex" : "hidden md:flex"} group relative h-14 min-h-11 flex-1 flex-col items-center justify-center gap-0.5 rounded-xl text-left transition md:h-auto md:flex-none md:flex-row md:justify-start md:gap-4 md:px-3 md:py-3 ${
                       active
                         ? "bg-[#EAF2FC] font-bold text-[#175CA9]"
                         : "font-semibold text-[#516176] hover:bg-[#F0F4F9] hover:text-[#14233C]"
                     }`}
                     aria-label={item.label}
+                    aria-current={active ? "page" : undefined}
+                    title={item.label}
                   >
                     <Icon size={22} strokeWidth={active ? 2.5 : 1.9} />
-                    <span className="hidden xl:inline">{item.label}</span>
+                    <span className="text-xs md:hidden xl:inline xl:text-base">{item.label}</span>
                     {item.badge && (
-                      <span className="absolute right-0 top-1 grid h-4 min-w-4 place-items-center rounded-full bg-[#E05454] px-1 text-[9px] font-bold text-white md:left-7 md:right-auto md:top-2 xl:left-auto xl:right-4">
+                      <span className="absolute left-[calc(50%+0.3rem)] top-1 grid h-4 min-w-4 place-items-center rounded-full bg-[#E05454] px-1 text-[9px] font-bold text-white md:left-7 md:top-2 xl:left-auto xl:right-4">
                         {item.badge}
                       </span>
                     )}
                   </button>
                 );
               })}
+              <MobileMoreNav currentPage={currentPage} navigate={navigate} />
             </nav>
             <button
               onClick={() => {
@@ -2994,41 +3083,51 @@ export default function App() {
               <PenLine size={18} />
               <span className="hidden xl:inline">Create post</span>
             </button>
-            <button
-              onClick={() => navigate("Profile")}
-              className="mb-6 mt-auto hidden items-center gap-3 rounded-xl p-2 text-left hover:bg-[#EEF2F7] md:flex"
-            >
-              <Avatar text="AM" tone="bg-[#F0C966] text-[#493407]" size="sm" />
-              <div className="hidden min-w-0 flex-1 xl:block">
-                <p className="truncate text-sm font-bold">Alex Morgan</p>
-                <p className="truncate text-xs text-[#718097]">Year 11 · Ash House</p>
-              </div>
-              <MoreHorizontal className="hidden xl:block" size={18} />
-            </button>
+            <SidebarProfile
+              profile={profile}
+              onOpenProfile={() => navigate("Profile")}
+              onLogOut={() => changeSession(true)}
+            />
           </div>
         </aside>
         <main className="min-w-0 border-[#DCE3EE] bg-white pb-20 md:border-r md:pb-0">
-          {selectedPost ? (
-            <PostDetailPage
-              post={posts.find((post) => post.id === selectedPost.id) ?? selectedPost}
-              onBack={() => setSelectedPost(null)}
-              onLike={toggleLike}
-              onBookmark={toggleBookmark}
-              onMenu={setMenuTarget}
+          {settingsView && (
+            <SettingsPage
+              profile={profile}
+              onLogOut={() => changeSession(true)}
+              onSaveProfile={saveProfile}
+              view={settingsView}
+              setView={setSettingsView}
+              onBack={closeSettings}
               flash={flash}
             />
-          ) : viewedProfile ? (
-            <OtherProfilePage
-              profile={viewedProfile}
-              onBack={() => setViewedProfile(null)}
-              navigate={navigate}
-              flash={flash}
-            />
-          ) : (
-            pageContent[activePage]
           )}
+          <div hidden={settingsView !== null}>
+            {activePage === "Search" && (
+              <div hidden={Boolean(selectedPost || viewedProfile)}>{pageContent.Search}</div>
+            )}
+            {selectedPost ? (
+              <PostDetailPage
+                profile={profile}
+                post={posts.find((post) => post.id === selectedPost.id) ?? selectedPost}
+                onBack={() => setSelectedPost(null)}
+                onLike={toggleLike}
+                onMenu={setMenuTarget}
+                flash={flash}
+              />
+            ) : viewedProfile ? (
+              <OtherProfilePage
+                profile={viewedProfile}
+                onBack={() => setViewedProfile(null)}
+                navigate={navigate}
+                flash={flash}
+              />
+            ) : (
+              activePage !== "Search" && pageContent[activePage]
+            )}
+          </div>
         </main>
-        <RightRail navigate={navigate} onSearch={() => navigate("Search")} />
+        <RightRail navigate={navigate} onSearch={openSearch} />
       </div>
       <button
         onClick={() => {
